@@ -16,13 +16,17 @@ Require these environment variables without printing their values:
 
 - `TEAM_WORKFLOW_URL`: Tailscale URL of the control plane, without a trailing slash.
 - `TEAM_WORKFLOW_TOKEN`: token for the current virtual Account.
+- `TEAM_WORKFLOW_WORKSTATION_ID`: opaque Workstation ID assigned to this Account.
+- `TEAM_WORKFLOW_SESSION_ID`: a new opaque ID generated immediately before this fresh Codex session.
 - `TEAM_WORKFLOW_BASE_BRANCH`: optional GitHub base branch; defaults to `main`.
+
+Never persist `TEAM_WORKFLOW_SESSION_ID` in an Account file or repository, and never reuse it after closing or switching the Codex session. Do not report a hostname, username, hardware identifier, prompt, or model transcript; the opaque IDs are sufficient execution evidence.
 
 Require a Git repository connected to the configured public GitHub project. Preserve unrelated local changes and never reset, clean, or overwrite them.
 
 ## Enter the workflow
 
-1. Run `whoami`, then `list`.
+1. Run `whoami`, confirm its Workstation matches `TEAM_WORKFLOW_WORKSTATION_ID`, then run `list`.
 2. Select only a Work Item eligible for the authenticated role. If the user named an ID, run `show <id>` before changing anything.
 3. Run `claim <id>`. Stop if it is blocked, already claimed, or rejected for the current role.
 4. Run `policy <id>`. Treat the returned rules and source versions as the Effective Guidance for this Agent Run.
@@ -70,9 +74,10 @@ After submission, report the Work Item as Submitted. Do not call it Accepted, In
 
 - `401`: verify the local token belongs to the intended virtual Account; do not display it.
 - `ROLE_MISMATCH`, `NOT_OWNER`, or `NOT_REVIEWER`: stop and report the identity/assignment mismatch.
+- `WORKSTATION_MISMATCH` or `AGENT_SESSION_CONFLICT`: stop; confirm the Account file, assigned Workstation, and fresh session ID instead of bypassing the binding.
 - `INVALID_STATE`: run `show <id>` and follow the returned current state; do not force a transition.
 - `INVALID_EVIDENCE`: fix the branch, commit, PR, or Artifact paths in GitHub, then submit again.
-- Network failure: preserve local work and retry the same command. The client derives a stable idempotency key from non-secret command inputs, and the server scopes it to the authenticated Account, so an identical retry cannot duplicate the state change or event. Do not claim a replacement Work Item.
+- Network failure: preserve local work and retry the same command in the same Agent Session. The client derives a stable idempotency key from non-secret command inputs plus the Agent Session ID, and the server scopes it to the authenticated Account, so an identical retry cannot duplicate the state change or event while a later fresh session remains distinct. Do not claim a replacement Work Item.
 - `IDEMPOTENCY_CONFLICT`: do not invent a new key to force the operation. Run `show <id>`, confirm the inputs and current state, then correct the command.
 
 ## Command reference

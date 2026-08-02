@@ -25,15 +25,21 @@ Commands:
 Environment:
   TEAM_WORKFLOW_URL
   TEAM_WORKFLOW_TOKEN
+  TEAM_WORKFLOW_WORKSTATION_ID
+  TEAM_WORKFLOW_SESSION_ID
   TEAM_WORKFLOW_BASE_BRANCH (optional, default: main)`
 }
 
 function configuration() {
   const url = process.env.TEAM_WORKFLOW_URL?.replace(/\/$/, '')
   const token = process.env.TEAM_WORKFLOW_TOKEN
+  const workstationId = process.env.TEAM_WORKFLOW_WORKSTATION_ID
+  const sessionId = process.env.TEAM_WORKFLOW_SESSION_ID
   if (!url) throw new Error('TEAM_WORKFLOW_URL is required')
   if (!token) throw new Error('TEAM_WORKFLOW_TOKEN is required')
-  return { url, token, baseBranch: process.env.TEAM_WORKFLOW_BASE_BRANCH || 'main' }
+  if (!workstationId) throw new Error('TEAM_WORKFLOW_WORKSTATION_ID is required')
+  if (!sessionId) throw new Error('TEAM_WORKFLOW_SESSION_ID is required')
+  return { url, token, workstationId, sessionId, baseBranch: process.env.TEAM_WORKFLOW_BASE_BRANCH || 'main' }
 }
 
 async function request(path, options = {}) {
@@ -42,6 +48,9 @@ async function request(path, options = {}) {
     method: options.method || 'GET',
     headers: {
       authorization: `Bearer ${config.token}`,
+      'x-workflow-agent-type': 'codex',
+      'x-workflow-workstation-id': config.workstationId,
+      'x-workflow-session-id': config.sessionId,
       ...(options.idempotencyKey ? { 'idempotency-key': options.idempotencyKey } : {}),
       ...(options.body ? { 'content-type': 'application/json' } : {})
     },
@@ -59,7 +68,7 @@ async function request(path, options = {}) {
 }
 
 function idempotencyKey(command, id, payload = {}) {
-  const input = JSON.stringify({ command, id, payload })
+  const input = JSON.stringify({ command, id, payload, sessionId: configuration().sessionId })
   const operation = createHash('sha256').update(input).digest('hex').slice(0, 24)
   return `workflow:${command}:${id}:${operation}`
 }

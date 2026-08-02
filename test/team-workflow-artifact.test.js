@@ -28,6 +28,8 @@ test('a fresh Codex checkout discovers the executable team-workflow Skill', asyn
   assert.match(skill, /scripts\/workflow\.mjs/)
   assert.match(skill, /explicit approval immediately before pushing/)
   assert.match(cli, /TEAM_WORKFLOW_URL/)
+  assert.match(cli, /TEAM_WORKFLOW_WORKSTATION_ID/)
+  assert.match(cli, /TEAM_WORKFLOW_SESSION_ID/)
   assert.match(cli, /idempotency-key/)
   execFileSync(process.execPath, ['--check', projectCliUrl.pathname])
 })

@@ -13,7 +13,7 @@ An operator securely transfers only the assigned files from `/opt/local-agent-wo
 | A | Alice, Carol, Erin | `DES-001`, `DEV-001`, `TST-001` | `DES-002`, `DEV-002`, `TST-002` |
 | B | Bob, Dave, Frank | `DES-002`, `DEV-002`, `TST-002` | `DES-001`, `DEV-001`, `TST-001` |
 
-Use one fresh Codex session and one separate clone per Account. Close the session before changing Accounts; never source two Account files in the same session.
+Use one fresh Codex session and one separate clone per Account. Close the session before changing Accounts; never source two Account files in the same session. Account files bind Alice, Carol, and Erin to `workstation-a`, and Bob, Dave, and Frank to `workstation-b`.
 
 Each workstation needs Tailscale access to `100.64.0.5`, Node.js 22 or newer, Git, GitHub CLI, and permission to push branches and create pull requests in the rollout repository. Verify access without loading a workflow token:
 
@@ -50,19 +50,20 @@ cd "$HOME/workflow-rollout/<account>"
 set -a
 . "<secure-account-file>"
 set +a
-node ".agents/skills/team-workflow/scripts/workflow.mjs" whoami
-node ".agents/skills/team-workflow/scripts/workflow.mjs" list
+export TEAM_WORKFLOW_SESSION_ID="$(node -e 'console.log(crypto.randomUUID())')"
+test -n "$TEAM_WORKFLOW_WORKSTATION_ID"
+test -n "$TEAM_WORKFLOW_SESSION_ID"
 ```
 
-`whoami` must show the expected Account and role. Stop if it shows another Account. The repository includes `.agents/skills/team-workflow/`, so a fresh Codex session can invoke `$team-workflow` without installing a global Skill.
+Generate the session ID immediately before launching Codex. Do not save it in the Account file, shell profile, repository, issue, or chat; discard it when the session closes. It is an opaque correlation ID, not a hostname, username, or hardware identifier.
 
-Start Codex in this clone and give it one Work Item only:
+The repository includes `.agents/skills/team-workflow/`, so a fresh Codex session can invoke `$team-workflow` without installing a global Skill. Start Codex from this shell and clone, then give it one Work Item only:
 
 ```text
 Use $team-workflow to complete <work-item-id> according to docs/ROLLOUT.md. Use only the authenticated Account, preserve unrelated work, and stop for my explicit approval immediately before pushing or creating a pull request.
 ```
 
-The session must run `whoami`, `list`, `show`, `claim`, `policy`, and `start` before producing the Artifact. The branch must use `work/<work-item-id>-<slug>`.
+The session must run `whoami`, `list`, `show`, `claim`, `policy`, and `start` before producing the Artifact. `whoami` must show the expected Account and assigned Workstation; stop if either differs. The branch must use `work/<work-item-id>-<slug>`.
 
 ## Submit and review
 
@@ -74,7 +75,7 @@ node ".agents/skills/team-workflow/scripts/workflow.mjs" submit "<work-item-id>"
 
 Repeat `--artifact "<kind>:<path>"` for every declared Artifact. A successful command means Submitted, not Accepted or Integrated.
 
-The configured Reviewer opens a fresh session with the Reviewer Account file and a separate clone. Ask Codex to inspect the Work Item, Effective Guidance, pull-request diff, checks, and Artifact paths:
+The configured Reviewer opens a fresh session with the Reviewer Account file and a separate clone, generates a new `TEAM_WORKFLOW_SESSION_ID`, and launches Codex from that environment. Ask Codex to inspect the Work Item, Effective Guidance, pull-request diff, checks, and Artifact paths:
 
 ```text
 Use $team-workflow to review <work-item-id> from <pull-request-url>. Accept only if the Git evidence, Effective Guidance, checks, and declared Artifacts agree; otherwise reject with a concrete recovery note.
@@ -101,6 +102,7 @@ Execute the stages in dependency order:
 The rollout passes when the dashboard shows all six Work Items as Integrated and `REQ-001` as Completed. Preserve these facts in `TST-002`:
 
 - six distinct authenticated Accounts and six Codex Agent Runs;
+- exactly two configured Workstations and distinct fresh Owner/Reviewer Agent Sessions, reconstructed from Activity Events without hostnames or prompts;
 - the Effective Guidance snapshot and source versions for every run;
 - pull-request URL, commit SHA, Artifact paths, reviewer, and merge SHA for every Work Item;
 - observed Submitted, Accepted, and Integrated events in order;
