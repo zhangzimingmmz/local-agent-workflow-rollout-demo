@@ -1,6 +1,6 @@
 ---
 name: team-workflow
-description: Claim, execute, submit, and review a tracked work item in the local-agent collaborative delivery PoC.
+description: Claim, execute, submit, review, and audit tracked work in the local-agent collaborative delivery PoC.
 disable-model-invocation: true
 ---
 
@@ -69,6 +69,16 @@ Inspect the Work Item, Effective Guidance, pull-request diff, checks, and declar
 The client infers repository, branch, and commit SHA from Git. If inference disagrees with the pull request, stop and repair the branch or PR instead of overriding evidence.
 
 After submission, report the Work Item as Submitted. Do not call it Accepted, Integrated, or Done. A different Reviewer must accept it, and a verified GitHub merge must integrate it.
+
+## Audit Requirement evidence
+
+After the Requirement is expected to be complete, run the read-only audit with the rollout's configured expectations:
+
+```text
+audit <requirement-id> --accounts <id,id> --workstations <id,id> --min-sessions <count>
+```
+
+Treat `passed: true` as a deterministic evidence check, not a substitute for human workstation operation. Preserve the JSON output as a Git Artifact when the Work Item requires an acceptance report. On `passed: false`, use `failures` to repair the real workflow or evidence; never edit the audit output to manufacture a pass.
 
 ## Recover safely
 

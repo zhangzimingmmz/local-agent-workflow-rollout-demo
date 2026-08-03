@@ -16,6 +16,7 @@ Commands:
   list
   show <work-item-id>
   status <work-item-id>
+  audit <requirement-id> [--accounts <id,id>] [--workstations <id,id>] [--min-sessions <count>]
   claim <work-item-id>
   start <work-item-id>
   policy <work-item-id>
@@ -106,10 +107,113 @@ function oneOption(args, name) {
   return values[0]
 }
 
+function optionalOption(args, name) {
+  const values = optionValues(args, name)
+  if (values.length > 1) throw new Error(`${name} may be provided at most once`)
+  return values[0]
+}
+
 function artifact(value) {
   const separator = value.indexOf(':')
   if (separator < 1 || separator === value.length - 1) throw new Error(`Invalid artifact ${value}; expected <kind:path>`)
   return { kind: value.slice(0, separator), path: value.slice(separator + 1) }
+}
+
+function sortedValues(value) {
+  return [...new Set((value || '').split(',').map((entry) => entry.trim()).filter(Boolean))].sort()
+}
+
+function sameValues(left, right) {
+  return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+function auditRequirement(dashboard, requirementId, args) {
+  const requirement = dashboard.requirements.find((candidate) => candidate.id === requirementId)
+  const tasks = dashboard.tasks.filter((task) => task.requirementId === requirementId)
+  const taskIds = new Set(tasks.map((task) => task.id))
+  const events = dashboard.events.filter((event) => (
+    event.requirementId === requirementId || taskIds.has(event.taskId)
+  ))
+  const runs = dashboard.agentRuns.filter((run) => taskIds.has(run.taskId))
+  const sessionIds = new Set(events.map((event) => event.agentSessionId).filter(Boolean))
+  const sessions = dashboard.agentSessions.filter((session) => sessionIds.has(session.sessionId))
+  const accounts = [...new Set(sessions.map((session) => session.actorId))].sort()
+  const workstations = [...new Set(sessions.map((session) => session.workstationId))].sort()
+  const expectedAccounts = sortedValues(optionalOption(args, '--accounts'))
+  const expectedWorkstations = sortedValues(optionalOption(args, '--workstations'))
+  const minimumText = optionalOption(args, '--min-sessions')
+  const minimumSessions = minimumText === undefined ? 0 : Number(minimumText)
+  if (!Number.isSafeInteger(minimumSessions) || minimumSessions < 0) {
+    throw new Error('--min-sessions must be a non-negative integer')
+  }
+
+  const failures = []
+  if (!requirement) failures.push(`Requirement ${requirementId} was not found`)
+  else if (requirement.status !== 'completed') failures.push(`Requirement ${requirementId} is ${requirement.status}, not completed`)
+  if (tasks.length === 0) failures.push(`Requirement ${requirementId} has no Work Items`)
+  for (const task of tasks) {
+    if (task.status !== 'integrated') failures.push(`Work Item ${task.id} is ${task.status}, not integrated`)
+    if (!task.evidence?.verified) failures.push(`Work Item ${task.id} has no verified Git Evidence`)
+    if (!task.mergeSha) failures.push(`Work Item ${task.id} has no verified merge SHA`)
+    const run = runs.find((candidate) => candidate.taskId === task.id)
+    if (!run) failures.push(`Work Item ${task.id} has no Agent Run`)
+    const scopes = new Set(run?.guidanceSnapshot?.sources?.map((source) => source.scope) ?? [])
+    for (const scope of ['organization', 'team', 'project', 'module', 'work_item']) {
+      if (!scopes.has(scope)) failures.push(`Work Item ${task.id} Agent Run is missing ${scope} guidance`)
+    }
+    const types = new Set(events.filter((event) => event.taskId === task.id).map((event) => event.type))
+    for (const type of ['TaskSubmitted', 'TaskAccepted', 'TaskIntegrated']) {
+      if (!types.has(type)) failures.push(`Work Item ${task.id} is missing ${type}`)
+    }
+  }
+  if (expectedAccounts.length > 0 && !sameValues(accounts, expectedAccounts)) {
+    failures.push(`Observed Accounts ${accounts.join(',') || 'none'} do not match ${expectedAccounts.join(',')}`)
+  }
+  if (expectedWorkstations.length > 0 && !sameValues(workstations, expectedWorkstations)) {
+    failures.push(`Observed Workstations ${workstations.join(',') || 'none'} do not match ${expectedWorkstations.join(',')}`)
+  }
+  if (sessions.length < minimumSessions) {
+    failures.push(`Observed ${sessions.length} Agent Sessions; at least ${minimumSessions} are required`)
+  }
+  for (let index = 1; index < events.length; index += 1) {
+    if (new Date(events[index].occurredAt).getTime() < new Date(events[index - 1].occurredAt).getTime()) {
+      failures.push('Activity Events are not in chronological order')
+      break
+    }
+  }
+
+  return {
+    requirementId,
+    passed: failures.length === 0,
+    failures,
+    observed: {
+      requirementStatus: requirement?.status ?? null,
+      workItems: tasks.length,
+      integratedWorkItems: tasks.filter((task) => task.status === 'integrated').length,
+      agentRuns: runs.length,
+      agentSessions: sessions.length,
+      accounts,
+      workstations,
+      events: events.length
+    },
+    workItems: tasks.map((task) => {
+      const run = runs.find((candidate) => candidate.taskId === task.id)
+      return {
+        id: task.id,
+        status: task.status,
+        ownerId: task.ownerId,
+        reviewerId: task.reviewerId,
+        agentRunId: run?.id ?? null,
+        agentSessionId: run?.agentSessionId ?? null,
+        guidanceSnapshotHash: run?.guidanceSnapshot?.snapshotHash ?? null,
+        commitSha: task.evidence?.commitSha ?? null,
+        pullRequestUrl: task.evidence?.pullRequestUrl ?? null,
+        artifacts: task.evidence?.artifacts ?? [],
+        mergeSha: task.mergeSha ?? null
+      }
+    }),
+    agentSessions: sessions
+  }
 }
 
 async function run(argv) {
@@ -121,6 +225,11 @@ async function run(argv) {
   let result
   if (command === 'whoami') result = await request('/api/v1/me')
   else if (command === 'list') result = await request('/api/v1/tasks')
+  else if (command === 'audit') {
+    if (!id) throw new Error('audit requires a Requirement ID')
+    result = auditRequirement(await request('/api/v1/dashboard'), id, args)
+    if (!result.passed) process.exitCode = 2
+  }
   else if (command === 'show' || command === 'status') {
     if (!id) throw new Error(`${command} requires a work item ID`)
     result = await request(`/api/v1/tasks/${encodeURIComponent(id)}`)
