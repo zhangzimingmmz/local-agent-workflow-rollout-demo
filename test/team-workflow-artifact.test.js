@@ -111,4 +111,71 @@ test('project CLI audits repeatable Requirement evidence and fails closed on inc
         && failed.failures.some((failure) => /DES-001 is submitted/.test(failure))
     }
   )
+
+  dashboard.requirements[0].status = 'completed'
+  dashboard.tasks[0].status = 'integrated'
+  dashboard.events.reverse()
+  const mismatchedCommand = [
+    projectCliUrl.pathname, 'audit', 'REQ-001',
+    '--accounts', 'alice,carol',
+    '--workstations', 'workstation-a',
+    '--min-sessions', '3'
+  ]
+  await assert.rejects(
+    runFile(process.execPath, mismatchedCommand, { env: environment }),
+    (error) => {
+      const failed = JSON.parse(error.stdout)
+      return error.code === 2
+        && failed.failures.some((failure) => /Observed Accounts alice,bob do not match alice,carol/.test(failure))
+        && failed.failures.some((failure) => /Observed Workstations workstation-a,workstation-b do not match workstation-a/.test(failure))
+        && failed.failures.some((failure) => /at least 3 are required/.test(failure))
+        && failed.failures.includes('Activity Events are not in chronological order')
+    }
+  )
+
+  dashboard.events.reverse()
+  dashboard.tasks[0].evidence.verified = false
+  dashboard.tasks[0].mergeSha = null
+  dashboard.agentRuns = []
+  dashboard.events = []
+  await assert.rejects(
+    runFile(process.execPath, [projectCliUrl.pathname, 'audit', 'REQ-001'], { env: environment }),
+    (error) => {
+      const failed = JSON.parse(error.stdout)
+      return error.code === 2
+        && failed.failures.some((failure) => /no verified Git Evidence/.test(failure))
+        && failed.failures.some((failure) => /no verified merge SHA/.test(failure))
+        && failed.failures.some((failure) => /no Agent Run/.test(failure))
+        && failed.failures.some((failure) => /missing organization guidance/.test(failure))
+        && failed.failures.some((failure) => /missing TaskSubmitted/.test(failure))
+    }
+  )
+
+  dashboard.requirements = []
+  dashboard.tasks = []
+  await assert.rejects(
+    runFile(process.execPath, [projectCliUrl.pathname, 'audit', 'REQ-404'], { env: environment }),
+    (error) => {
+      const failed = JSON.parse(error.stdout)
+      return error.code === 2
+        && failed.observed.requirementStatus === null
+        && failed.failures.includes('Requirement REQ-404 was not found')
+        && failed.failures.includes('Requirement REQ-404 has no Work Items')
+    }
+  )
+
+  await assert.rejects(
+    runFile(process.execPath, [projectCliUrl.pathname, 'audit'], { env: environment }),
+    (error) => error.code === 1 && /audit requires a Requirement ID/.test(error.stderr)
+  )
+  await assert.rejects(
+    runFile(process.execPath, [projectCliUrl.pathname, 'audit', 'REQ-001', '--min-sessions', '-1'], { env: environment }),
+    (error) => error.code === 1 && /--min-sessions must be a non-negative integer/.test(error.stderr)
+  )
+  await assert.rejects(
+    runFile(process.execPath, [
+      projectCliUrl.pathname, 'audit', 'REQ-001', '--accounts', 'alice', '--accounts', 'bob'
+    ], { env: environment }),
+    (error) => error.code === 1 && /--accounts may be provided at most once/.test(error.stderr)
+  )
 })
